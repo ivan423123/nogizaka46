@@ -177,26 +177,41 @@ const MEMBER_BLOGS = [
   // 他のメンバーも必要に応じて追加
 ];
 
+// 初期表示用の制限設定
+const INITIAL_MEMBER_LIMIT = 5; // 初期表示で取得するメンバー数
+const INITIAL_BLOG_LIMIT = 10; // 初期表示で取得する総ブログ数
+
 // ブログを取得する関数
 async function getMemberBlogs(memberId = null, limit = 5) {
   try {
-    // メンバーIDが指定されていない場合はすべてのメンバーから取得
-    const targetMembers = memberId && memberId !== 'all'
-      ? MEMBER_BLOGS.filter(member => member.id === memberId)
-      : MEMBER_BLOGS;
+    let targetMembers;
     
+    if (memberId && memberId !== 'all') {
+      // 特定メンバーの場合
+      targetMembers = MEMBER_BLOGS.filter(member => member.id === memberId);
+    } else if (!memberId) {
+      // 初期表示の場合
+      targetMembers = MEMBER_BLOGS
+        .sort(() => Math.random() - 0.5) // ランダムに並び替え
+        .slice(0, INITIAL_MEMBER_LIMIT);  // 指定数だけ取得
+    } else {
+      // 'all'の場合は全メンバー
+      targetMembers = MEMBER_BLOGS;
+    }
+
     // 各メンバーのブログを取得するPromiseの配列
-    const promises = targetMembers.map(member => {
+    const promises = targetMembers.map(async member => {
       const apiUrl = `${BLOG_API}${encodeURIComponent(member.rssUrl)}`;
       
-      return fetch(apiUrl)
-        .then(response => {
+      // リトライ処理を追加
+      for (let retry = 0; retry < 3; retry++) {
+        try {
+          const response = await fetch(apiUrl);
           if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
           }
-          return response.json();
-        })
-        .then(data => {
+          const data = await response.json();
+          
           if (!data.items || data.items.length === 0) {
             return [];
           }
@@ -245,23 +260,25 @@ async function getMemberBlogs(memberId = null, limit = 5) {
               rawDate: date // ソート用
             };
           });
-        });
+        } catch (err) {
+          if (retry === 2) throw err; // 最後のリトライでも失敗した場合
+          await new Promise(resolve => setTimeout(resolve, 1000 * (retry + 1))); // リトライ間隔を設定
+        }
+      }
     });
-    
-    // すべてのPromiseが解決するのを待つ
+
     const results = await Promise.all(promises);
-    
-    // 結果を1つの配列にフラット化
     let allBlogs = [];
     results.forEach(blogs => {
       allBlogs = allBlogs.concat(blogs);
     });
-    
-    // 日付で降順にソート
+
     allBlogs.sort((a, b) => b.rawDate - a.rawDate);
     
-    // 指定された数だけ返す
-    return allBlogs.slice(0, limit);
+    // 初期表示の場合は INITIAL_BLOG_LIMIT を使用
+    const actualLimit = !memberId ? INITIAL_BLOG_LIMIT : limit;
+    return allBlogs.slice(0, actualLimit);
+
   } catch (error) {
     console.error('Error fetching member blogs:', error);
     throw error;
