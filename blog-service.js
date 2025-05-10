@@ -178,106 +178,89 @@ const MEMBER_BLOGS = [
 ];
 
 // 初期表示用の制限設定
-const INITIAL_MEMBER_LIMIT = 5; // 初期表示で取得するメンバー数
-const INITIAL_BLOG_LIMIT = 10; // 初期表示で取得する総ブログ数
+const INITIAL_BLOG_LIMIT = 5; // 初期表示で取得するブログ数
+const DEFAULT_MEMBER_ID = '12'; // 五百城茉央のID
 
 // ブログを取得する関数
-async function getMemberBlogs(memberId = null, limit = 5) {
+async function getMemberBlogs(memberId = DEFAULT_MEMBER_ID, limit = 5) {
   try {
-    let targetMembers;
+    // 特定メンバーのみを取得
+    const targetMember = MEMBER_BLOGS.find(member => member.id === memberId);
     
-    if (memberId && memberId !== 'all') {
-      // 特定メンバーの場合
-      targetMembers = MEMBER_BLOGS.filter(member => member.id === memberId);
-    } else if (!memberId) {
-      // 初期表示の場合
-      targetMembers = MEMBER_BLOGS
-        .sort(() => Math.random() - 0.5) // ランダムに並び替え
-        .slice(0, INITIAL_MEMBER_LIMIT);  // 指定数だけ取得
-    } else {
-      // 'all'の場合は全メンバー
-      targetMembers = MEMBER_BLOGS;
+    if (!targetMember) {
+      throw new Error('Member not found');
     }
 
-    // 各メンバーのブログを取得するPromiseの配列
-    const promises = targetMembers.map(async member => {
-      const apiUrl = `${BLOG_API}${encodeURIComponent(member.rssUrl)}`;
-      
-      // リトライ処理を追加
-      for (let retry = 0; retry < 3; retry++) {
-        try {
-          const response = await fetch(apiUrl);
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-          const data = await response.json();
-          
-          if (!data.items || data.items.length === 0) {
-            return [];
-          }
-          
-          // 各ブログ記事にメンバー情報を追加
-          return data.items.map(item => {
-            // サムネイル画像を取得
-            let thumbnail = '';
-            try {
-              const tempDiv = document.createElement('div');
-              tempDiv.innerHTML = item.content;
-              const img = tempDiv.querySelector('img');
-              if (img) {
-                thumbnail = img.src;
-              }
-            } catch (err) {
-              console.warn('Error extracting thumbnail:', err);
-            }
-            
-            // 日付をフォーマット
-            const date = new Date(item.pubDate);
-            const formattedDate = date.toLocaleDateString('ja-JP', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric'
-            });
-            
-            // テキスト抜粋を取得
-            let excerpt = '';
-            try {
-              const tempDiv = document.createElement('div');
-              tempDiv.innerHTML = item.content;
-              excerpt = tempDiv.textContent.trim().substring(0, 100) + '...';
-            } catch (err) {
-              console.warn('Error extracting excerpt:', err);
-            }
-            
-            return {
-              title: item.title,
-              link: item.link,
-              pubDate: formattedDate,
-              excerpt: excerpt,
-              thumbnail: thumbnail,
-              memberId: member.id,
-              memberName: member.name,
-              rawDate: date // ソート用
-            };
-          });
-        } catch (err) {
-          if (retry === 2) throw err; // 最後のリトライでも失敗した場合
-          await new Promise(resolve => setTimeout(resolve, 1000 * (retry + 1))); // リトライ間隔を設定
-        }
-      }
-    });
-
-    const results = await Promise.all(promises);
-    let allBlogs = [];
-    results.forEach(blogs => {
-      allBlogs = allBlogs.concat(blogs);
-    });
-
-    allBlogs.sort((a, b) => b.rawDate - a.rawDate);
+    const apiUrl = `${BLOG_API}${encodeURIComponent(targetMember.rssUrl)}`;
     
-    // 初期表示の場合は INITIAL_BLOG_LIMIT を使用
-    const actualLimit = !memberId ? INITIAL_BLOG_LIMIT : limit;
-    return allBlogs.slice(0, actualLimit);
+    // リトライ処理
+    for (let retry = 0; retry < 3; retry++) {
+      try {
+        const response = await fetch(apiUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        
+        if (!data.items || data.items.length === 0) {
+          return [];
+        }
+        
+        // ブログ記事の処理
+        const blogs = data.items.map(item => {
+          // サムネイル画像を取得
+          let thumbnail = '';
+          try {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = item.content;
+            const img = tempDiv.querySelector('img');
+            if (img) {
+              thumbnail = img.src;
+            }
+          } catch (err) {
+            console.warn('Error extracting thumbnail:', err);
+          }
+          
+          // 日付をフォーマット
+          const date = new Date(item.pubDate);
+          const formattedDate = date.toLocaleDateString('ja-JP', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          });
+          
+          // テキスト抜粋を取得
+          let excerpt = '';
+          try {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = item.content;
+            excerpt = tempDiv.textContent.trim().substring(0, 100) + '...';
+          } catch (err) {
+            console.warn('Error extracting excerpt:', err);
+          }
+          
+          return {
+            title: item.title,
+            link: item.link,
+            pubDate: formattedDate,
+            excerpt: excerpt,
+            thumbnail: thumbnail,
+            memberId: targetMember.id,
+            memberName: targetMember.name,
+            rawDate: date
+          };
+        });
+
+        // 最新順にソートして指定件数を返す
+        return blogs
+          .sort((a, b) => b.rawDate - a.rawDate)
+          .slice(0, limit);
+
+      } catch (err) {
+        if (retry === 2) throw err;
+        await new Promise(resolve => setTimeout(resolve, 1000 * (retry + 1)));
+      }
+    }
 
   } catch (error) {
     console.error('Error fetching member blogs:', error);
